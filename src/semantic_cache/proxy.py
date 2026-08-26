@@ -1,4 +1,4 @@
-"""FastAPI proxy server — drop-in replacement for the OpenAI API.
+"""FastAPI proxy server -- drop-in replacement for the OpenAI API.
 
 Any application can switch to this proxy by changing its base URL
 from  https://api.openai.com/v1  to  http://localhost:8000/v1
@@ -16,6 +16,7 @@ from typing import AsyncIterator
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field
 
 from .api_models import (
     ChatCompletionChunk,
@@ -31,7 +32,21 @@ from .providers import ProviderRouter
 
 logger = logging.getLogger(__name__)
 
-# ── App Factory ─────────────────────────────────────────────────────
+
+# -- Request models for new endpoints --------------------------------
+class InvalidateRequest(BaseModel):
+    """Request body for cache invalidation."""
+    system_prompt: str | None = None
+    model: str | None = None
+    prefix: str | None = None
+
+
+class ThresholdAnalysisRequest(BaseModel):
+    """Query params for threshold analysis."""
+    thresholds: list[float] | None = None
+
+
+# -- App Factory -----------------------------------------------------
 def create_app(config: CacheConfig | None = None) -> FastAPI:
     """Build and return the FastAPI application."""
     config = config or CacheConfig()
@@ -39,10 +54,10 @@ def create_app(config: CacheConfig | None = None) -> FastAPI:
     app = FastAPI(
         title="Semantic Cache Proxy",
         description="Drop-in caching proxy for LLM APIs",
-        version="0.2.0",
+        version="0.3.0",
     )
 
-    # CORS — allow any origin so frontends can call the proxy
+    # CORS -- allow any origin so frontends can call the proxy
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -50,7 +65,7 @@ def create_app(config: CacheConfig | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Shared state — attached to the app instance
+    # Shared state -- attached to the app instance
     app.state.config = config
     app.state.cache = SemanticCache(config)
     app.state.router = ProviderRouter(config)
@@ -58,14 +73,20 @@ def create_app(config: CacheConfig | None = None) -> FastAPI:
     app.state.cache_hits = 0
     app.state.cache_misses = 0
 
-    # ── Routes ──────────────────────────────────────────────────
+    # -- Routes ------------------------------------------------------
     @app.get("/")
     async def root():
         return {
             "service": "Semantic Cache Proxy",
-            "version": "0.2.0",
+            "version": "0.3.0",
             "status": "running",
             "providers": app.state.router.available_providers,
+            "features": [
+                "ttl_auto_classification",
+                "cache_invalidation",
+                "threshold_tuner",
+                "adaptive_thresholds",
+            ],
         }
 
     @app.get("/health")
@@ -86,7 +107,7 @@ def create_app(config: CacheConfig | None = None) -> FastAPI:
 
     @app.post("/v1/chat/completions")
     async def chat_completions(request: ChatCompletionRequest):
-        """The main endpoint — mirrors OpenAI's chat completions."""
+        """The main endpoint -- mirrors OpenAI's chat completions."""
         app.state.request_count += 1
         t0 = time.perf_counter()
 
@@ -94,7 +115,7 @@ def create_app(config: CacheConfig | None = None) -> FastAPI:
         system_prompt = request.get_system_prompt()
         gen_params = request.get_generation_params()
 
-        # ── Step 1: Check cache ─────────────────────────────────
+        # -- Step 1: Check cache -------------------------------------
         cache_result = app.state.cache.lookup(
             prompt=user_prompt,
             system_prompt=system_prompt,
@@ -107,7 +128,7 @@ def create_app(config: CacheConfig | None = None) -> FastAPI:
             app.state.cache_hits += 1
             elapsed_ms = (time.perf_counter() - t0) * 1000
             logger.info(
-                "CACHE HIT — served in %.1fms (score=%.4f)",
+                "CACHE HIT -- served in %.1fms (score=%.4f)",
                 elapsed_ms,
                 cache_result.similarity_score,
             )
@@ -131,9 +152,9 @@ def create_app(config: CacheConfig | None = None) -> FastAPI:
                 },
             )
 
-        # ── Step 2: Cache miss — forward to LLM provider ───────
+        # -- Step 2: Cache miss -- forward to LLM provider -----------
         app.state.cache_misses += 1
-        logger.info("CACHE MISS — forwarding to provider")
+        logger.info("CACHE MISS -- forwarding to provider")
 
         provider = app.state.router.get_provider(request.model)
         messages = [m.model_dump(exclude_none=True) for m in request.messages]
@@ -194,6 +215,7 @@ def create_app(config: CacheConfig | None = None) -> FastAPI:
             },
         )
 
+    # -- Cache Stats -------------------------------------------------
     @app.get("/v1/cache/stats")
     async def cache_stats():
         """Expose cache statistics for monitoring."""
@@ -219,10 +241,65 @@ def create_app(config: CacheConfig | None = None) -> FastAPI:
         app.state.request_count = 0
         return {"status": "cache cleared"}
 
+    # -- Invalidation (Phase 3) --------------------------------------
+    @app.post("/v1/cache/invalidate")
+    async def invalidate_cache(req: InvalidateRequest):
+        """Selectively invalidate cache entries.
+
+        Provide one of:
+          - system_prompt: invalidate all entries for that prompt
+          - model: invalidate all entries for that model
+          - prefix: invalidate entries whose prompt starts with this
+        """
+        total_removed = 0
+
+        if req.system_prompt is not None:
+            count = app.state.cache.invalidate_by_system_prompt(req.system_prompt)
+            total_removed += count
+
+        if req.model is not None:
+            count = app.state.cache.invalidate_by_model(req.model)
+            total_removed += count
+
+        if req.prefix is not None:
+            count = app.state.cache.invalidate_by_prefix(req.prefix)
+            total_removed += count
+
+        # Also purge expired while we're at it
+        expired = app.state.cache.purge_expired()
+
+        return {
+            "status": "invalidated",
+            "entries_removed": total_removed,
+            "expired_purged": expired,
+        }
+
+    # -- Threshold Tuner (Phase 3) -----------------------------------
+    @app.get("/v1/cache/threshold-analysis")
+    async def threshold_analysis():
+        """Analyse how different thresholds would affect hit rate.
+
+        This is the interview money shot -- shows the tradeoff between
+        cache hit rate and accuracy at different thresholds.
+        """
+        return app.state.cache.get_threshold_analysis()
+
+    @app.get("/v1/cache/near-misses")
+    async def near_misses(limit: int = 20):
+        """Show prompts that narrowly missed the cache threshold.
+
+        These represent optimization opportunities -- if you lower
+        the threshold or normalize prompts, these become hits.
+        """
+        return {
+            "current_threshold": app.state.config.similarity_threshold,
+            "near_misses": app.state.cache.get_near_misses(limit),
+        }
+
     return app
 
 
-# ── Response Formatting Helpers ─────────────────────────────────────
+# -- Response Formatting Helpers -------------------------------------
 def _format_cached_response(
     cached: dict, model: str
 ) -> ChatCompletionResponse:
@@ -234,15 +311,10 @@ def _format_cached_response(
 
 
 def _stream_cached_response(cached: dict, model: str) -> StreamingResponse:
-    """Fake-stream a cached response as SSE chunks.
-
-    Cache hits return instantly, but if the client requested streaming,
-    we still need to send the data in SSE format so it doesn't break.
-    """
+    """Fake-stream a cached response as SSE chunks."""
     content = cached.get("content", "")
 
     async def generate() -> AsyncIterator[str]:
-        # Send the content as a single chunk (it's instant anyway)
         chunk = ChatCompletionChunk(
             model=model,
             choices=[
@@ -253,7 +325,6 @@ def _stream_cached_response(cached: dict, model: str) -> StreamingResponse:
         )
         yield f"data: {chunk.model_dump_json()}\n\n"
 
-        # Send the finish chunk
         finish_chunk = ChatCompletionChunk(
             model=model,
             choices=[
@@ -284,15 +355,10 @@ def _stream_from_provider(
     max_tokens: int | None,
     gen_params: dict,
 ) -> StreamingResponse:
-    """Stream from the real LLM provider while buffering for cache.
-
-    This is the tricky part: we need to stream chunks to the client
-    in real-time AND collect all the chunks so we can store the
-    complete response in the cache when the stream finishes.
-    """
+    """Stream from the real LLM provider while buffering for cache."""
 
     async def generate() -> AsyncIterator[str]:
-        buffer: list[str] = []  # collect all chunks for caching
+        buffer: list[str] = []
 
         try:
             async for content_piece in provider.stream(
@@ -303,7 +369,6 @@ def _stream_from_provider(
             ):
                 buffer.append(content_piece)
 
-                # Send each chunk to the client as SSE
                 chunk = ChatCompletionChunk(
                     model=model,
                     choices=[
@@ -314,7 +379,6 @@ def _stream_from_provider(
                 )
                 yield f"data: {chunk.model_dump_json()}\n\n"
 
-            # Stream finished — send finish marker
             finish_chunk = ChatCompletionChunk(
                 model=model,
                 choices=[
@@ -327,9 +391,8 @@ def _stream_from_provider(
             yield f"data: {finish_chunk.model_dump_json()}\n\n"
             yield "data: [DONE]\n\n"
 
-            # Store the complete buffered response in cache
             full_content = "".join(buffer)
-            if full_content:  # only cache non-empty responses
+            if full_content:
                 app.state.cache.store(
                     prompt=user_prompt,
                     response={"content": full_content},

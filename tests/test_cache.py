@@ -164,7 +164,7 @@ class TestSemanticCache(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.config = CacheConfig(similarity_threshold=0.75)
+        cls.config = CacheConfig(similarity_threshold=0.75 , enable_adaptive_threshold = False)
         cls.cache = SemanticCache(cls.config)
 
     def setUp(self):

@@ -35,8 +35,8 @@ class SimilarityMatch:
 class InMemoryVectorStore:
     """Thread-safe, brute-force vector store backed by NumPy.
 
-    Stores embeddings in a (N × D) float32 matrix and performs cosine
-    similarity via a single matrix–vector dot product (O(N·D)).
+    Stores embeddings in a (N x D) float32 matrix and performs cosine
+    similarity via a single matrix-vector dot product (O(N*D)).
     Because all vectors are pre-normalised to unit length, dot product
     **equals** cosine similarity.
 
@@ -53,12 +53,12 @@ class InMemoryVectorStore:
         self._max = max_entries
         self._lock = threading.Lock()
 
-        # Parallel arrays — same index in each structure refers to the
+        # Parallel arrays -- same index in each structure refers to the
         # same cache entry.
         self._embeddings: np.ndarray = np.empty((0, dimension), dtype=np.float32)
         self._entries: list[CacheEntry] = []
 
-    # ── Public API ──────────────────────────────────────────────────
+    # -- Public API --------------------------------------------------
     @property
     def size(self) -> int:
         """Current number of entries in the store."""
@@ -87,11 +87,11 @@ class InMemoryVectorStore:
     ) -> list[SimilarityMatch]:
         """Find the most similar entries **within the same cache-key partition**.
 
-        Only entries whose ``cache_key`` matches are considered — this
+        Only entries whose ``cache_key`` matches are considered -- this
         prevents cross-contamination between different system prompts,
         models, or temperature settings.
 
-        Returns at most *top_k* matches whose similarity ≥ *threshold*,
+        Returns at most *top_k* matches whose similarity >= *threshold*,
         sorted by descending similarity.
         """
         query_vec = np.array(query_embedding, dtype=np.float32)
@@ -130,6 +130,38 @@ class InMemoryVectorStore:
                 matches.append(SimilarityMatch(self._entries[original_idx], sim))
             return matches
 
+    def search_best_score(
+        self,
+        query_embedding: list[float],
+        cache_key: str,
+    ) -> float:
+        """Return the highest similarity score for the query (no threshold).
+
+        Used by the threshold tuner to record what the best match was,
+        regardless of whether it passed the threshold.
+        """
+        query_vec = np.array(query_embedding, dtype=np.float32)
+
+        with self._lock:
+            if self._embeddings.size == 0:
+                return 0.0
+
+            key_mask = np.array(
+                [e.cache_key == cache_key for e in self._entries], dtype=bool
+            )
+            if not key_mask.any():
+                return 0.0
+
+            expiry_mask = np.array(
+                [not e.metadata.is_expired for e in self._entries], dtype=bool
+            )
+            combined_mask = key_mask & expiry_mask
+            if not combined_mask.any():
+                return 0.0
+
+            scores = self._embeddings[combined_mask] @ query_vec
+            return float(np.max(scores))
+
     def delete(self, entry_id: str) -> bool:
         """Remove a single entry by ID.  Returns True if found."""
         with self._lock:
@@ -152,7 +184,41 @@ class InMemoryVectorStore:
         with self._lock:
             return list(self._entries)
 
-    # ── Internal ────────────────────────────────────────────────────
+    # -- Invalidation (Phase 3) --------------------------------------
+    def invalidate_by_cache_key(self, cache_key: str) -> int:
+        """Remove all entries matching a cache_key (system prompt changed).
+
+        Returns the number of entries removed.
+        """
+        with self._lock:
+            return self._remove_where(lambda e: e.cache_key == cache_key)
+
+    def invalidate_by_model(self, model_id: str) -> int:
+        """Remove all entries for a specific model (model upgraded).
+
+        Returns the number of entries removed.
+        """
+        with self._lock:
+            return self._remove_where(
+                lambda e: e.metadata.model_id == model_id
+            )
+
+    def invalidate_by_prefix(self, prefix: str) -> int:
+        """Remove entries whose prompt starts with the given prefix.
+
+        Returns the number of entries removed.
+        """
+        with self._lock:
+            return self._remove_where(
+                lambda e: e.prompt_text.startswith(prefix)
+            )
+
+    def purge_expired(self) -> int:
+        """Remove all expired entries. Returns the count removed."""
+        with self._lock:
+            return self._remove_where(lambda e: e.metadata.is_expired)
+
+    # -- Internal ----------------------------------------------------
     def _evict_oldest(self) -> None:
         """Remove the oldest entry (FIFO).  Caller must hold ``_lock``."""
         if not self._entries:
@@ -160,3 +226,20 @@ class InMemoryVectorStore:
         evicted = self._entries.pop(0)
         self._embeddings = self._embeddings[1:]
         logger.info("Evicted oldest entry %s (hit_count=%d)", evicted.id, evicted.metadata.hit_count)
+
+    def _remove_where(self, predicate) -> int:
+        """Remove all entries matching predicate. Caller must hold _lock."""
+        indices_to_remove = [
+            i for i, e in enumerate(self._entries) if predicate(e)
+        ]
+        if not indices_to_remove:
+            return 0
+
+        # Remove in reverse order to preserve indices
+        for i in reversed(indices_to_remove):
+            self._entries.pop(i)
+        self._embeddings = np.delete(self._embeddings, indices_to_remove, axis=0)
+
+        count = len(indices_to_remove)
+        logger.info("Invalidated %d entries", count)
+        return count

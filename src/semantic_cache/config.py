@@ -11,13 +11,13 @@ class CacheConfig(BaseSettings):
     ``SEMCACHE_`` (e.g. ``SEMCACHE_SIMILARITY_THRESHOLD=0.92``).
     """
 
-    # ── Embedding Model ─────────────────────────────────────────────
+    # -- Embedding Model ---------------------------------------------
     embedding_model: str = Field(
         default="all-MiniLM-L6-v2",
         description="HuggingFace sentence-transformers model name.",
     )
 
-    # ── Similarity ──────────────────────────────────────────────────
+    # -- Similarity --------------------------------------------------
     similarity_threshold: float = Field(
         default=0.95,
         ge=0.0,
@@ -27,8 +27,15 @@ class CacheConfig(BaseSettings):
             "Start high (0.95) and tune down with the threshold tuner later."
         ),
     )
+    enable_adaptive_threshold: bool = Field(
+        default=True,
+        description=(
+            "When True, the cache auto-adjusts the similarity threshold "
+            "based on detected task type (classification, creative, etc.)."
+        ),
+    )
 
-    # ── Cache Limits ────────────────────────────────────────────────
+    # -- Cache Limits ------------------------------------------------
     default_ttl_seconds: int = Field(
         default=86_400,  # 24 hours
         description="Default time-to-live for a cache entry in seconds.",
@@ -38,7 +45,7 @@ class CacheConfig(BaseSettings):
         description="Maximum number of entries before eviction kicks in.",
     )
 
-    # ── Provider Settings (Phase 2) ─────────────────────────────────
+    # -- Provider Settings (Phase 2) ---------------------------------
     openai_api_key: str = Field(
         default="",
         description="OpenAI API key. Leave empty to skip OpenAI provider.",
@@ -56,7 +63,7 @@ class CacheConfig(BaseSettings):
         description="Default LLM provider: 'openai' or 'ollama'.",
     )
 
-    # ── Proxy Server ────────────────────────────────────────────────
+    # -- Proxy Server ------------------------------------------------
     proxy_host: str = Field(default="0.0.0.0", description="Proxy listen host.")
     proxy_port: int = Field(default=8000, description="Proxy listen port.")
 
