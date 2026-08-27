@@ -15,7 +15,7 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .api_models import (
@@ -28,12 +28,14 @@ from .api_models import (
 )
 from .cache_engine import SemanticCache
 from .config import CacheConfig
+from .dashboard import render_dashboard_html
+from .metrics import MetricsCollector
 from .providers import ProviderRouter
 
 logger = logging.getLogger(__name__)
 
 
-# -- Request models for new endpoints --------------------------------
+# -- Request models for Phase 3 endpoints ----------------------------
 class InvalidateRequest(BaseModel):
     """Request body for cache invalidation."""
     system_prompt: str | None = None
@@ -54,7 +56,7 @@ def create_app(config: CacheConfig | None = None) -> FastAPI:
     app = FastAPI(
         title="Semantic Cache Proxy",
         description="Drop-in caching proxy for LLM APIs",
-        version="0.3.0",
+        version="0.4.0",
     )
 
     # CORS -- allow any origin so frontends can call the proxy
@@ -69,16 +71,15 @@ def create_app(config: CacheConfig | None = None) -> FastAPI:
     app.state.config = config
     app.state.cache = SemanticCache(config)
     app.state.router = ProviderRouter(config)
-    app.state.request_count = 0
-    app.state.cache_hits = 0
-    app.state.cache_misses = 0
+    app.state.metrics = MetricsCollector()
 
     # -- Routes ------------------------------------------------------
     @app.get("/")
     async def root():
+        m = app.state.metrics
         return {
             "service": "Semantic Cache Proxy",
-            "version": "0.3.0",
+            "version": "0.4.0",
             "status": "running",
             "providers": app.state.router.available_providers,
             "features": [
@@ -86,7 +87,14 @@ def create_app(config: CacheConfig | None = None) -> FastAPI:
                 "cache_invalidation",
                 "threshold_tuner",
                 "adaptive_thresholds",
+                "prometheus_metrics",
+                "live_dashboard",
             ],
+            "quick_stats": {
+                "total_requests": m.total_requests,
+                "hit_rate": f"{m.hit_rate * 100:.1f}%",
+                "cost_savings_usd": round(m.total_savings_usd, 4),
+            },
         }
 
     @app.get("/health")
@@ -105,11 +113,12 @@ def create_app(config: CacheConfig | None = None) -> FastAPI:
             ],
         }
 
+    # -- Main Endpoint -----------------------------------------------
     @app.post("/v1/chat/completions")
     async def chat_completions(request: ChatCompletionRequest):
         """The main endpoint -- mirrors OpenAI's chat completions."""
-        app.state.request_count += 1
         t0 = time.perf_counter()
+        metrics = app.state.metrics
 
         user_prompt = request.get_user_prompt()
         system_prompt = request.get_system_prompt()
@@ -125,21 +134,28 @@ def create_app(config: CacheConfig | None = None) -> FastAPI:
         )
 
         if cache_result.hit:
-            app.state.cache_hits += 1
             elapsed_ms = (time.perf_counter() - t0) * 1000
+            response_content = cache_result.response.get("content", "")
+
+            # Record metrics
+            metrics.record_hit(
+                model=request.model,
+                latency_ms=elapsed_ms,
+                similarity_score=cache_result.similarity_score,
+                prompt_text=user_prompt,
+                response_content=response_content,
+            )
             logger.info(
                 "CACHE HIT -- served in %.1fms (score=%.4f)",
                 elapsed_ms,
                 cache_result.similarity_score,
             )
 
-            # If client wants streaming, fake-stream the cached response
             if request.stream:
                 return _stream_cached_response(
                     cache_result.response, request.model
                 )
 
-            # Non-streaming: return the cached response directly
             response = _format_cached_response(
                 cache_result.response, request.model
             )
@@ -153,7 +169,6 @@ def create_app(config: CacheConfig | None = None) -> FastAPI:
             )
 
         # -- Step 2: Cache miss -- forward to LLM provider -----------
-        app.state.cache_misses += 1
         logger.info("CACHE MISS -- forwarding to provider")
 
         provider = app.state.router.get_provider(request.model)
@@ -170,6 +185,7 @@ def create_app(config: CacheConfig | None = None) -> FastAPI:
                 temperature=request.temperature,
                 max_tokens=request.max_tokens,
                 gen_params=gen_params,
+                t0=t0,
             )
 
         # Non-streaming miss
@@ -182,6 +198,12 @@ def create_app(config: CacheConfig | None = None) -> FastAPI:
             )
         except Exception as e:
             logger.error("Provider error: %s", e)
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            metrics.record_miss(
+                model=request.model,
+                latency_ms=elapsed_ms,
+                best_score=cache_result.similarity_score,
+            )
             return JSONResponse(
                 status_code=502,
                 content={"error": {"message": f"Provider error: {e}", "type": "proxy_error"}},
@@ -201,6 +223,12 @@ def create_app(config: CacheConfig | None = None) -> FastAPI:
         )
 
         elapsed_ms = (time.perf_counter() - t0) * 1000
+        metrics.record_miss(
+            model=request.model,
+            latency_ms=elapsed_ms,
+            best_score=cache_result.similarity_score,
+        )
+
         response = build_response(
             content=provider_resp.content,
             model=provider_resp.model,
@@ -220,54 +248,34 @@ def create_app(config: CacheConfig | None = None) -> FastAPI:
     async def cache_stats():
         """Expose cache statistics for monitoring."""
         stats = app.state.cache.stats()
+        m = app.state.metrics
         stats["proxy"] = {
-            "total_requests": app.state.request_count,
-            "cache_hits": app.state.cache_hits,
-            "cache_misses": app.state.cache_misses,
-            "hit_rate": (
-                app.state.cache_hits / app.state.request_count
-                if app.state.request_count > 0
-                else 0.0
-            ),
+            "total_requests": m.total_requests,
+            "cache_hits": m.cache_hits,
+            "cache_misses": m.cache_misses,
+            "hit_rate": round(m.hit_rate, 4),
         }
         return stats
 
     @app.delete("/v1/cache")
     async def clear_cache():
-        """Clear the entire cache."""
+        """Clear the entire cache and reset metrics."""
         app.state.cache.clear()
-        app.state.cache_hits = 0
-        app.state.cache_misses = 0
-        app.state.request_count = 0
+        app.state.metrics.reset()
         return {"status": "cache cleared"}
 
     # -- Invalidation (Phase 3) --------------------------------------
     @app.post("/v1/cache/invalidate")
     async def invalidate_cache(req: InvalidateRequest):
-        """Selectively invalidate cache entries.
-
-        Provide one of:
-          - system_prompt: invalidate all entries for that prompt
-          - model: invalidate all entries for that model
-          - prefix: invalidate entries whose prompt starts with this
-        """
+        """Selectively invalidate cache entries."""
         total_removed = 0
-
         if req.system_prompt is not None:
-            count = app.state.cache.invalidate_by_system_prompt(req.system_prompt)
-            total_removed += count
-
+            total_removed += app.state.cache.invalidate_by_system_prompt(req.system_prompt)
         if req.model is not None:
-            count = app.state.cache.invalidate_by_model(req.model)
-            total_removed += count
-
+            total_removed += app.state.cache.invalidate_by_model(req.model)
         if req.prefix is not None:
-            count = app.state.cache.invalidate_by_prefix(req.prefix)
-            total_removed += count
-
-        # Also purge expired while we're at it
+            total_removed += app.state.cache.invalidate_by_prefix(req.prefix)
         expired = app.state.cache.purge_expired()
-
         return {
             "status": "invalidated",
             "entries_removed": total_removed,
@@ -277,24 +285,35 @@ def create_app(config: CacheConfig | None = None) -> FastAPI:
     # -- Threshold Tuner (Phase 3) -----------------------------------
     @app.get("/v1/cache/threshold-analysis")
     async def threshold_analysis():
-        """Analyse how different thresholds would affect hit rate.
-
-        This is the interview money shot -- shows the tradeoff between
-        cache hit rate and accuracy at different thresholds.
-        """
+        """Analyse how different thresholds would affect hit rate."""
         return app.state.cache.get_threshold_analysis()
 
     @app.get("/v1/cache/near-misses")
     async def near_misses(limit: int = 20):
-        """Show prompts that narrowly missed the cache threshold.
-
-        These represent optimization opportunities -- if you lower
-        the threshold or normalize prompts, these become hits.
-        """
+        """Show prompts that narrowly missed the cache threshold."""
         return {
             "current_threshold": app.state.config.similarity_threshold,
             "near_misses": app.state.cache.get_near_misses(limit),
         }
+
+    # -- Monitoring & Dashboard (Phase 4) ----------------------------
+    @app.get("/metrics")
+    async def prometheus_metrics():
+        """Prometheus-compatible metrics endpoint for scraping."""
+        return PlainTextResponse(
+            content=app.state.metrics.get_prometheus(),
+            media_type="text/plain; version=0.0.4; charset=utf-8",
+        )
+
+    @app.get("/v1/metrics/detailed")
+    async def detailed_metrics():
+        """Detailed JSON metrics for the dashboard."""
+        return app.state.metrics.get_summary()
+
+    @app.get("/v1/dashboard")
+    async def dashboard():
+        """Live-updating HTML dashboard with charts."""
+        return HTMLResponse(content=render_dashboard_html())
 
     return app
 
@@ -354,6 +373,7 @@ def _stream_from_provider(
     temperature: float | None,
     max_tokens: int | None,
     gen_params: dict,
+    t0: float,
 ) -> StreamingResponse:
     """Stream from the real LLM provider while buffering for cache."""
 
@@ -404,6 +424,13 @@ def _stream_from_provider(
                 logger.info(
                     "Cached streamed response (%d chars)", len(full_content)
                 )
+
+            # Record miss metrics after stream completes
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            app.state.metrics.record_miss(
+                model=model,
+                latency_ms=elapsed_ms,
+            )
 
         except Exception as e:
             logger.error("Streaming error: %s", e)

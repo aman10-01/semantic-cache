@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Semantic Caching Layer for LLM APIs — Project Overview</title>
+    <style>
+        @page { margin: 1in; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Calibri, Arial, sans-serif;
+            color: #1a1a2e;
+            line-height: 1.7;
+            padding: 60px 80px;
+            max-width: 900px;
+            margin: auto;
+            background: #fff;
+        }
+        h1 {
+            font-size: 28px;
+            font-weight: 700;
+            color: #0f3460;
+            border-bottom: 3px solid #e94560;
+            padding-bottom: 12px;
+            margin-bottom: 8px;
+        }
+        .subtitle {
+            font-size: 14px;
+            color: #555;
+            margin-bottom: 40px;
+        }
+        h2 {
+            font-size: 20px;
+            font-weight: 600;
+            color: #16213e;
+            margin-top: 36px;
+            margin-bottom: 14px;
+            padding-left: 14px;
+            border-left: 4px solid #e94560;
+        }
+        h3 {
+            font-size: 16px;
+            font-weight: 600;
+            color: #0f3460;
+            margin-top: 20px;
+            margin-bottom: 8px;
+        }
+        p, li {
+            font-size: 14px;
+            color: #2d2d2d;
+        }
+        p { margin-bottom: 12px; }
+        ul, ol {
+            padding-left: 24px;
+            margin-bottom: 14px;
+        }
+        li { margin-bottom: 6px; }
+        .highlight-box {
+            background: #f0f4ff;
+            border: 1px solid #c5d5f5;
+            border-radius: 8px;
+            padding: 18px 22px;
+            margin: 18px 0;
+        }
+        .highlight-box p { margin-bottom: 6px; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 16px 0 24px 0;
+            font-size: 13.5px;
+        }
+        th {
+            background: #0f3460;
+            color: #fff;
+            text-align: left;
+            padding: 10px 14px;
+            font-weight: 600;
+        }
+        td {
+            padding: 9px 14px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        tr:nth-child(even) td { background: #f8f9fc; }
+        .flow-diagram {
+            background: #fafbff;
+            border: 1px solid #d0d8e8;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+            text-align: center;
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 2;
+            color: #16213e;
+        }
+        .tag {
+            display: inline-block;
+            background: #e94560;
+            color: #fff;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 2px 10px;
+            border-radius: 12px;
+            margin-right: 6px;
+        }
+        .tag.blue { background: #0f3460; }
+        .tag.green { background: #1a9c5b; }
+        .footer {
+            margin-top: 50px;
+            padding-top: 16px;
+            border-top: 1px solid #ddd;
+            font-size: 12px;
+            color: #999;
+            text-align: center;
+        }
+        @media print {
+            body { padding: 0; }
+            .no-print { display: none; }
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Semantic Caching Layer for LLM APIs</h1>
+    <p class="subtitle">Project Overview Document &nbsp;|&nbsp; August 2026</p>
+
+    <!-- ============================================================ -->
+    <h2>1. What This Project Is About</h2>
+
+    <p>
+        This project is a <strong>middleware caching service</strong> that sits between
+        your application and any LLM provider (OpenAI, Ollama, etc.). It detects
+        <strong>semantically similar requests</strong> that have already been answered
+        and serves cached responses instantly — cutting latency to near-zero and
+        reducing API costs by 30–60% on typical workloads.
+    </p>
+
+    <div class="highlight-box">
+        <p><strong>Key Idea:</strong> Instead of exact string matching, the cache uses
+        <em>vector embeddings</em> to understand the <em>meaning</em> of prompts. So
+        "What is Python?" and "Explain Python to me" are recognized as the same question
+        and served from cache.</p>
+    </div>
+
+    <h3>Core Features</h3>
+    <ul>
+        <li><strong>Semantic Similarity Matching</strong> — Embeds prompts into 384-dimensional vectors and uses cosine similarity to find matches</li>
+        <li><strong>Drop-In Proxy API</strong> — Mirrors the OpenAI Chat Completions API exactly; switch by changing the base URL, zero code changes</li>
+        <li><strong>Multi-Provider Routing</strong> — Auto-detects whether to route to OpenAI or Ollama (local, free) based on the model name</li>
+        <li><strong>TTL Auto-Classification</strong> — Automatically assigns cache lifetimes: 24h for factual queries, 1h for time-sensitive ones, skip for creative prompts</li>
+        <li><strong>Adaptive Thresholds</strong> — Adjusts similarity thresholds per task type (classification=0.90, QA=0.93, creative=0.98)</li>
+        <li><strong>Threshold Tuner</strong> — Visualizes the tradeoff between cache hit rate and accuracy at different thresholds</li>
+        <li><strong>Cache Invalidation</strong> — Selective invalidation by system prompt, model upgrade, or prompt prefix</li>
+        <li><strong>Streaming Support</strong> — Simultaneously streams responses to the client while buffering for cache storage</li>
+    </ul>
+
+    <!-- ============================================================ -->
+    <h2>2. What Problem It Solves</h2>
+
+    <p>
+        Every company running LLMs at scale faces the same problem:
+        <strong>redundant API calls burning money and adding latency.</strong>
+        In real-world applications, 30–60% of LLM queries are semantically
+        identical to previous ones.
+    </p>
+
+    <h3>Problems Addressed</h3>
+
+    <table>
+        <tr>
+            <th style="width: 35%;">Problem</th>
+            <th>How This Project Solves It</th>
+        </tr>
+        <tr>
+            <td><strong>High API Costs</strong><br>Each LLM call costs money (GPT-4o ~ $5/1M tokens)</td>
+            <td>Cache hits return instantly at zero cost. Repeated and similar queries never hit the paid API twice.</td>
+        </tr>
+        <tr>
+            <td><strong>High Latency</strong><br>LLM calls take 1–10 seconds each</td>
+            <td>Cache hits return in under 5ms — sub-millisecond similarity search via NumPy vector operations.</td>
+        </tr>
+        <tr>
+            <td><strong>Exact Match Fails</strong><br>Traditional caches miss "What is Python?" vs "Explain Python to me"</td>
+            <td>Semantic embeddings understand meaning, not just characters. Both prompts map to similar vectors.</td>
+        </tr>
+        <tr>
+            <td><strong>Stale Cache Entries</strong><br>Time-sensitive answers go stale</td>
+            <td>TTL auto-classifier assigns different lifetimes based on content type. Weather queries expire in 1h, definitions last 24h.</td>
+        </tr>
+        <tr>
+            <td><strong>One-Size-Fits-All Threshold</strong><br>Different tasks need different similarity tolerances</td>
+            <td>Adaptive thresholds auto-detect task type and adjust. Classification tasks tolerate lower similarity; creative tasks require near-exact matches.</td>
+        </tr>
+        <tr>
+            <td><strong>Vendor Lock-In</strong><br>Tied to a single LLM provider</td>
+            <td>Provider-agnostic design. Route to OpenAI, Ollama, or add new providers with a single class.</td>
+        </tr>
+    </table>
+
+    <h3>Request Flow</h3>
+    <div class="flow-diagram">
+        Client App &nbsp; ──► &nbsp; <strong>Semantic Cache Proxy</strong> &nbsp; ──► &nbsp; Cache Lookup<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+        │<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+        ┌───────────┴───────────┐<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+        <span style="color: #1a9c5b; font-weight:bold;">CACHE HIT</span>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+        <span style="color: #e94560; font-weight:bold;">CACHE MISS</span><br>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+        Return instantly &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Forward to LLM → Store → Return<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+        (< 5ms, $0) &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; (1–10s, costs tokens)
+    </div>
+
+    <!-- ============================================================ -->
+    <h2>3. Tech Stack</h2>
+
+    <table>
+        <tr>
+            <th style="width: 28%;">Component</th>
+            <th style="width: 32%;">Tool / Library</th>
+            <th>Why This Choice</th>
+        </tr>
+        <tr>
+            <td><strong>Language</strong></td>
+            <td>Python 3.13+</td>
+            <td>Ecosystem compatibility, ML library support</td>
+        </tr>
+        <tr>
+            <td><strong>Embeddings</strong></td>
+            <td>sentence-transformers<br><code>all-MiniLM-L6-v2</code></td>
+            <td>Free, local, no API key needed. Produces 384-dim vectors. Fast inference on CPU.</td>
+        </tr>
+        <tr>
+            <td><strong>Vector Store</strong></td>
+            <td>NumPy (in-memory)</td>
+            <td>Zero infrastructure. Brute-force cosine similarity via matrix dot product. Swappable for Redis/Qdrant later.</td>
+        </tr>
+        <tr>
+            <td><strong>Proxy Layer</strong></td>
+            <td>FastAPI + Uvicorn</td>
+            <td>Async, high-performance, auto-generated OpenAPI docs. Drop-in API replacement for OpenAI.</td>
+        </tr>
+        <tr>
+            <td><strong>HTTP Client</strong></td>
+            <td>httpx</td>
+            <td>Async HTTP for calling LLM providers. Supports streaming SSE responses.</td>
+        </tr>
+        <tr>
+            <td><strong>LLM Providers</strong></td>
+            <td>OpenAI API + Ollama</td>
+            <td>OpenAI for production. Ollama for free local development with open-source models (Llama, Qwen, etc.).</td>
+        </tr>
+        <tr>
+            <td><strong>Configuration</strong></td>
+            <td>Pydantic Settings</td>
+            <td>Type-safe config with environment variable overrides (SEMCACHE_ prefix).</td>
+        </tr>
+        <tr>
+            <td><strong>Data Models</strong></td>
+            <td>Pydantic v2</td>
+            <td>Validates all request/response payloads. Mirrors OpenAI's JSON schema exactly.</td>
+        </tr>
+        <tr>
+            <td><strong>Testing</strong></td>
+            <td>pytest</td>
+            <td>42+ tests across 3 phases. Covers similarity matching, TTL classification, invalidation, and threshold analysis.</td>
+        </tr>
+        <tr>
+            <td><strong>Cache Policy</strong></td>
+            <td>Custom TTL + keyword classifier</td>
+            <td>Auto-assigns TTL tiers (24h / 6h / 1h / skip) based on prompt content analysis.</td>
+        </tr>
+        <tr>
+            <td><strong>Threshold Tuning</strong></td>
+            <td>Custom threshold tuner</td>
+            <td>Records lookup history. Replays at different thresholds to find the optimal hit-rate vs accuracy balance.</td>
+        </tr>
+    </table>
+
+    <h3>Project Structure</h3>
+    <div class="flow-diagram" style="text-align: left; font-size: 13px; line-height: 1.8;">
+        semantic-cache/<br>
+        ├── src/semantic_cache/<br>
+        │&nbsp;&nbsp;&nbsp;├── __init__.py&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="tag blue">Package init</span><br>
+        │&nbsp;&nbsp;&nbsp;├── config.py&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="tag blue">Settings</span><br>
+        │&nbsp;&nbsp;&nbsp;├── models.py&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="tag blue">Data models</span><br>
+        │&nbsp;&nbsp;&nbsp;├── embeddings.py&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="tag blue">Embedding engine</span><br>
+        │&nbsp;&nbsp;&nbsp;├── cache_store.py&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="tag blue">Vector store</span><br>
+        │&nbsp;&nbsp;&nbsp;├── cache_engine.py&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="tag blue">Core engine</span><br>
+        │&nbsp;&nbsp;&nbsp;├── api_models.py&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="tag">OpenAI schemas</span><br>
+        │&nbsp;&nbsp;&nbsp;├── proxy.py&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="tag">FastAPI server</span><br>
+        │&nbsp;&nbsp;&nbsp;├── ttl_classifier.py&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="tag green">TTL classifier</span><br>
+        │&nbsp;&nbsp;&nbsp;├── threshold_tuner.py&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="tag green">Threshold tuner</span><br>
+        │&nbsp;&nbsp;&nbsp;└── providers/<br>
+        │&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── __init__.py&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="tag">Provider router</span><br>
+        │&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── base.py&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="tag">Abstract provider</span><br>
+        │&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── openai_provider.py&nbsp;&nbsp;&nbsp;&nbsp;<span class="tag">OpenAI</span><br>
+        │&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── ollama_provider.py&nbsp;&nbsp;&nbsp;&nbsp;<span class="tag">Ollama</span><br>
+        ├── tests/<br>
+        │&nbsp;&nbsp;&nbsp;├── test_cache.py&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="tag blue">Phase 1 tests</span><br>
+        │&nbsp;&nbsp;&nbsp;└── test_phase3.py&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="tag green">Phase 3 tests</span><br>
+        ├── run_proxy.py&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="tag">Server entry point</span><br>
+        ├── demo.py&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="tag blue">Interactive demo</span><br>
+        └── requirements.txt
+    </div>
+
+    <p style="margin-top: 12px;">
+        <span class="tag blue">Blue</span> = Phase 1 (Cache Engine) &nbsp;&nbsp;
+        <span class="tag">Red</span> = Phase 2 (Proxy API) &nbsp;&nbsp;
+        <span class="tag green">Green</span> = Phase 3 (Policies &amp; Tuning)
+    </p>
+
+    <div class="footer">
+        Semantic Caching Layer for LLM APIs &nbsp;|&nbsp; Built with Python, FastAPI, sentence-transformers
+    </div>
+
+</body>
+</html>
