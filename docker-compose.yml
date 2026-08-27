@@ -1,0 +1,38 @@
+version: "3.9"
+
+services:
+  # ── Our Proxy ────────────────────────────────────────────────────
+  proxy:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - SEMCACHE_PROXY_HOST=0.0.0.0
+      - SEMCACHE_PROXY_PORT=8000
+      - SEMCACHE_SIMILARITY_THRESHOLD=0.95
+      - SEMCACHE_ENABLE_ADAPTIVE_THRESHOLD=true
+      - SEMCACHE_OLLAMA_BASE_URL=http://ollama:11434
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+  # ── Prometheus (metrics scraping) ────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    restart: unless-stopped
+
+  # ── Ollama (optional local LLM) ──────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  ollama_data:

@@ -1,0 +1,1 @@
+venv/ .venv/ pycache/ .pytest_cache/ .git/ .gitignore *.pyc *.md tests/ load_test.py demo.py .env .env.example
