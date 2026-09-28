@@ -303,3 +303,22 @@ class SemanticCache:
     def delete(self, entry_id: str) -> bool:
         """Remove a single entry by its ID."""
         return self._store.delete(entry_id)
+
+    def get_all_entries(self) -> list[dict]:
+        """Get all active cache entries formatted for the UI."""
+        with self._lock:
+            entries = self.store.get_all_entries()
+            
+        # Format for the frontend
+        return [
+            {
+                "id": entry.id,
+                "prompt": entry.prompt_text,
+                "response": entry.response.get("content", "")[:200] + "...",
+                "hits": entry.metadata.hit_count,
+                "ttl_remaining": max(0, int(entry.metadata.ttl_seconds - (time.time() - entry.metadata.created_at))),
+                "model": entry.metadata.model_id or "unknown"
+            }
+            for entry in entries
+        ]
+    

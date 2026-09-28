@@ -243,6 +243,11 @@ def create_app(config: CacheConfig | None = None) -> FastAPI:
             },
         )
 
+    @app.get("/v1/cache/entries")
+    async def list_cache_entries():
+        """API endpoint for the Cache Explorer UI."""
+        return {"entries": app.state.cache.get_all_entries()}
+
     # -- Cache Stats -------------------------------------------------
     @app.get("/v1/cache/stats")
     async def cache_stats():

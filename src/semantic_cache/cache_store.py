@@ -162,6 +162,11 @@ class InMemoryVectorStore:
             scores = self._embeddings[combined_mask] @ query_vec
             return float(np.max(scores))
 
+    def get_all_entries(self) -> list[CacheEntry]:
+        """Return all valid cache entries for the explorer UI."""
+        self._purge_expired()
+        return list(self._entries.values())
+
     def delete(self, entry_id: str) -> bool:
         """Remove a single entry by ID.  Returns True if found."""
         with self._lock:
