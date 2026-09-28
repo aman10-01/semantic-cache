@@ -86,6 +86,25 @@ def render_dashboard_html() -> str:
   </table>
 </div>
 
+<div class="card" style="margin-bottom: 24px;">
+  <div class="chart-title">Cache Explorer (Live Entries)</div>
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Model</th>
+        <th>Prompt</th>
+        <th>Response Snippet</th>
+        <th>Hits</th>
+        <th>TTL (s)</th>
+      </tr>
+    </thead>
+    <tbody id="explorerTable">
+      <tr><td colspan="6" style="color:#64748b;">Loading entries...</td></tr>
+    </tbody>
+  </table>
+</div>
+
 <script>
 const donutCtx = document.getElementById('hitMissChart').getContext('2d');
 const donutChart = new Chart(donutCtx, {
@@ -162,6 +181,25 @@ async function refresh() {
         '<tr><td>' + m + '</td><td>' + s.hits + '</td><td>' + s.misses + '</td>' +
         '<td><span class="badge badge-green">' + (s.hit_rate * 100).toFixed(1) + '%</span></td>' +
         '<td>$' + s.savings_usd.toFixed(4) + '</td></tr>'
+      ).join('');
+    }
+    // Fetch and render cache entries
+    const entRes = await fetch('/v1/cache/entries');
+    const entData = await entRes.json();
+    const etbody = document.getElementById('explorerTable');
+    
+    if (!entData.entries || entData.entries.length === 0) {
+      etbody.innerHTML = '<tr><td colspan="6" style="color:#64748b;">No active cache entries</td></tr>';
+    } else {
+      etbody.innerHTML = entData.entries.map(e => 
+        '<tr>' +
+        '<td><span class="badge badge-blue">' + e.id.substring(0,6) + '</span></td>' +
+        '<td>' + e.model + '</td>' +
+        '<td>' + e.prompt + '</td>' +
+        '<td style="color:#94a3b8; font-size:12px; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + e.response + '</td>' +
+        '<td>' + e.hits + '</td>' +
+        '<td>' + e.ttl_remaining + 's</td>' +
+        '</tr>'
       ).join('');
     }
   } catch(e) { console.error('Refresh failed:', e); }
