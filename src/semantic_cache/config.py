@@ -68,3 +68,13 @@ class CacheConfig(BaseSettings):
     proxy_port: int = Field(default=8000, description="Proxy listen port.")
 
     model_config = {"env_prefix": "SEMCACHE_"}
+
+        # ── Storage Backend ─────────────────────────────────────────────
+    storage_backend: str = Field(
+        default="memory",
+        description="Storage backend: 'memory' or 'redis'",
+    )
+    redis_url: str = Field(
+        default="redis://localhost:6379",
+        description="Redis connection URL when using redis backend",
+    )
