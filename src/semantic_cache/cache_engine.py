@@ -11,6 +11,8 @@ import time
 from typing import Any
 
 from .cache_store import InMemoryVectorStore
+from .redis_store import RedisVectorStore
+from .base_store import BaseVectorStore
 from .config import CacheConfig
 from .embeddings import EmbeddingEngine
 from .models import (
@@ -79,10 +81,14 @@ class SemanticCache:
     def __init__(self, config: CacheConfig | None = None) -> None:
         self._config = config or CacheConfig()
         self._embedder = EmbeddingEngine(self._config.embedding_model)
-        self._store = InMemoryVectorStore(
-            dimension=self._embedder.dimension,
-            max_entries=self._config.max_cache_entries,
-        )
+        if self._config.storage_backend == "redis":
+            try:
+                self._store: BaseVectorStore = RedisVectorStore(redis_url=self._config.redis_url)
+            except Exception as e:
+                logger.warning("Failed to connect to Redis (%s). Falling back to in-memory store.", e)
+                self._store = InMemoryVectorStore(dimension=self._embedder.dimension, max_entries=self._config.max_cache_entries)
+        else:
+            self._store = InMemoryVectorStore(dimension=self._embedder.dimension, max_entries=self._config.max_cache_entries)
         self._tuner = ThresholdTuner()
         logger.info(
             "SemanticCache ready -- model=%s, threshold=%.2f, max_entries=%d",
@@ -307,8 +313,7 @@ class SemanticCache:
     def get_all_entries(self) -> list[dict]:
         """Get all active cache entries formatted for the UI."""
         entries = self._store.get_all_entries()
-            
-        # Format for the frontend
+
         return [
             {
                 "id": entry.id,
@@ -316,8 +321,35 @@ class SemanticCache:
                 "response": entry.response.get("content", "")[:200] + "..." if isinstance(entry.response, dict) else str(entry.response)[:200],
                 "hits": entry.metadata.hit_count,
                 "ttl_remaining": max(0, int(entry.metadata.ttl_seconds - (time.time() - entry.metadata.created_at))),
-                "model": entry.metadata.model_id or "unknown"
+                "model": entry.metadata.model_id or "unknown",
             }
             for entry in entries
         ]
-    
+
+    def test_similarity(self, prompt: str, top_k: int = 5) -> list[dict]:
+        """Test a prompt against all cached entries. Returns top matches with scores."""
+        import numpy as np
+
+        query_emb = np.array(self._embedder.encode(prompt), dtype=np.float32)
+        q_norm = np.linalg.norm(query_emb)
+        if q_norm > 0:
+            query_emb = query_emb / q_norm
+
+        entries = self._store.get_all_entries()
+        scored = []
+        for entry in entries:
+            if entry.metadata.is_expired:
+                continue
+            emb = np.array(entry.prompt_embedding, dtype=np.float32)
+            e_norm = np.linalg.norm(emb)
+            score = float(np.dot(query_emb, emb / e_norm)) if e_norm > 0 else 0.0
+            scored.append({
+                "prompt": entry.prompt_text,
+                "response": entry.response.get("content", "")[:150] if isinstance(entry.response, dict) else str(entry.response)[:150],
+                "score": round(score, 4),
+                "would_hit": score >= self._config.similarity_threshold,
+                "model": entry.metadata.model_id or "unknown",
+            })
+
+        scored.sort(key=lambda x: x["score"], reverse=True)
+        return scored[:top_k]

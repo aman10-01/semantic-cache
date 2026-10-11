@@ -248,6 +248,35 @@ def create_app(config: CacheConfig | None = None) -> FastAPI:
         """API endpoint for the Cache Explorer UI."""
         return {"entries": app.state.cache.get_all_entries()}
 
+    @app.post("/v1/cache/seed")
+    async def seed_cache(request: Request):
+        """Seed the cache with a prompt/response pair (no LLM needed)."""
+        body = await request.json()
+        prompt = body.get("prompt", "")
+        response_text = body.get("response", "")
+        model = body.get("model", "gpt-4o")
+        if not prompt or not response_text:
+            return {"error": "prompt and response are required"}
+        entry_id = app.state.cache.store(
+            prompt=prompt,
+            response={"content": response_text},
+            model=model,
+            model_id=model,
+            token_usage={"prompt_tokens": len(prompt)//4, "completion_tokens": len(response_text)//4, "total_tokens": (len(prompt)+len(response_text))//4},
+        )
+        return {"status": "seeded", "entry_id": entry_id}
+
+    @app.post("/v1/cache/test-similarity")
+    async def test_similarity(request: Request):
+        """Test a prompt against the cache without storing it."""
+        body = await request.json()
+        prompt = body.get("prompt", "")
+        top_k = body.get("top_k", 5)
+        if not prompt:
+            return {"error": "prompt is required"}
+        results = app.state.cache.test_similarity(prompt, top_k=top_k)
+        return {"query": prompt, "matches": results}
+
     # -- Cache Stats -------------------------------------------------
     @app.get("/v1/cache/stats")
     async def cache_stats():

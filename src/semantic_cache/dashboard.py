@@ -43,6 +43,14 @@ def render_dashboard_html() -> str:
 
 <h1><span class="live-dot"></span>Semantic Cache Dashboard</h1>
 <p class="subtitle">Auto-refreshes every 5 seconds | Phase 4</p>
+<div class="card" style="margin-bottom: 24px;">
+  <div class="chart-title">Test Similarity Sandbox</div>
+  <div style="display:flex; gap:8px; margin-bottom:12px;">
+    <input id="testInput" type="text" placeholder="Type a query to test against the cache..." style="flex:1; padding:10px; background:#0f172a; border:1px solid #334155; border-radius:8px; color:#e2e8f0; font-size:14px;" />
+    <button onclick="testSimilarity()" style="padding:10px 20px; background:#38bdf8; color:#0f172a; border:none; border-radius:8px; font-weight:700; cursor:pointer;">Test</button>
+  </div>
+  <div id="testResults" style="color:#64748b; font-size:13px;">Enter a prompt and click Test</div>
+</div>
 
 <div class="grid">
   <div class="card">
@@ -207,6 +215,31 @@ async function refresh() {
 
 refresh();
 setInterval(refresh, 5000);
+async function testSimilarity() {
+  const input = document.getElementById('testInput').value.trim();
+  if (!input) return;
+  const div = document.getElementById('testResults');
+  div.innerHTML = 'Searching...';
+  try {
+    const r = await fetch('/v1/cache/test-similarity', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({prompt: input, top_k: 5})
+    });
+    const d = await r.json();
+    if (!d.matches || d.matches.length === 0) {
+      div.innerHTML = '<span style="color:#f87171;">No cached entries found.</span>';
+      return;
+    }
+    div.innerHTML = '<table style="width:100%;"><thead><tr><th>Score</th><th>Status</th><th>Cached Prompt</th><th>Response</th></tr></thead><tbody>' +
+      d.matches.map(m =>
+        '<tr><td style="font-weight:700;color:' + (m.would_hit ? '#22c55e' : m.score > 0.8 ? '#facc15' : '#f87171') + ';">' + m.score + '</td>' +
+        '<td>' + (m.would_hit ? '<span class="badge badge-green">HIT</span>' : '<span style="color:#f87171;">MISS</span>') + '</td>' +
+        '<td>' + m.prompt + '</td>' +
+        '<td style="color:#94a3b8;font-size:12px;">' + m.response + '</td></tr>'
+      ).join('') + '</tbody></table>';
+  } catch(e) { div.innerHTML = '<span style="color:#f87171;">Error: ' + e + '</span>'; }
+}
 </script>
 </body>
 </html>'''

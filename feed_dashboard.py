@@ -1,14 +1,17 @@
 import httpx
 import time
 
-URL = "http://localhost:8000/v1/chat/completions"
+BASE = "http://localhost:8000"
 
-prompts = [
-    "What is Python?",
-    "Explain quantum computing",
-    "How does photosynthesis work?",
-    "What is the capital of Japan?",
-    "Who was Albert Einstein?",
+seeds = [
+    ("What is Python?", "Python is a high-level programming language known for its simple syntax."),
+    ("Explain quantum computing", "Quantum computing uses quantum bits to perform calculations exponentially faster."),
+    ("How does photosynthesis work?", "Plants convert sunlight, water and CO2 into glucose and oxygen."),
+    ("What is the capital of Japan?", "The capital of Japan is Tokyo."),
+    ("Who was Albert Einstein?", "Einstein was a theoretical physicist who developed the theory of relativity."),
+]
+
+queries = [
     "Explain the Python programming language",
     "Can you explain quantum computing simply?",
     "How do plants do photosynthesis?",
@@ -16,22 +19,17 @@ prompts = [
     "What did Albert Einstein do?",
 ]
 
-print("Sending requests through proxy at http://localhost:8000...")
-with httpx.Client(timeout=30.0) as client:
-    for i, prompt in enumerate(prompts, 1):
-        try:
-            resp = client.post(
-                URL,
-                json={
-                    "model": "gpt-4o",
-                    "messages": [{"role": "user", "content": prompt}],
-                },
-            )
-            status = resp.headers.get("X-Cache", "UNKNOWN")
-            print(f"[{i}/{len(prompts)}] '{prompt}' -> {status}")
-            time.sleep(0.5)
-        except Exception as e:
-            print(f"Error connecting to proxy: {e}")
-            break
+with httpx.Client(timeout=30.0) as c:
+    print("Seeding cache...")
+    for prompt, resp in seeds:
+        r = c.post(f"{BASE}/v1/cache/seed", json={"prompt": prompt, "response": resp})
+        print(f"  Seeded: {prompt}")
 
-print("\nDone! Check your browser dashboard now.")
+    print("\nSending similar queries (should be cache hits)...")
+    for q in queries:
+        r = c.post(f"{BASE}/v1/chat/completions", json={"model": "gpt-4o", "messages": [{"role": "user", "content": q}]})
+        status = r.headers.get("X-Cache", "UNKNOWN")
+        print(f"  '{q}' -> {status}")
+        time.sleep(0.3)
+
+print("\nDone! Check http://localhost:8000/v1/dashboard")
